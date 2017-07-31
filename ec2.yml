@@ -1,0 +1,241 @@
+# This creates a VPC with two subnets, one public and one private. Subsequent CloudFormation
+# templates in this series build on this to add additional resources.
+
+# Use defaults for everything: this is very abbreviated for clarity and only supports t2.small in us-west-2.
+# For all options see the template this is based on, and adapt for your own use:
+# http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/sample-templates-services-us-west-2.html
+
+# To run, go to: https://us-west-2.console.aws.amazon.com/cloudformation,
+# select the region you want to create the VPC in, and choose 'Create stack'
+
+# Consideration for using this yourself: your own instance types, add a NAT Gateway, Network ACLs
+# http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_ACLs.html
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Sample CloudFormation template'
+
+Parameters:
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.small
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  PublicSubnetId:
+    Type: String
+
+  VPCId:
+    Type: String
+    # VPCStack.Outputs.VPCId
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    Default: 0.0.0.0/0
+
+Mappings:
+  Region2Examples:
+    us-west-2:
+      Examples: https://s3-us-west-2.amazonaws.com/cloudformation-examples-us-west-2
+
+  AWSInstanceType2Arch:
+    t2.small:
+      Arch: HVM64
+
+  AWSInstanceType2NATArch:
+    t2.small:
+      Arch: NATHVM64
+
+  AWSRegionArch2AMI:
+    us-west-2:
+      PV64: ami-7f77b31f
+      HVM64: ami-7172b611
+      HVMG2: ami-aaebfcd3
+
+
+Resources:
+
+  # This nested template sets up the VPC, subnets, etc.
+  # VPCStack:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: https://raw.githubusercontent.com/john/cloudformation-examples/master/1.0_vpc_subnets.yml
+  #     TimeoutInMinutes: '60'
+
+  # # Assign an Elastic IP to the web server instance, defined below
+  # IPAddress:
+  #   Type: AWS::EC2::EIP
+  #   DependsOn: AttachGateway
+  #   Properties:
+  #     Domain: vpc
+  #     InstanceId:
+  #       Ref: WebServerInstance
+
+  # A security group to allow members access to ssh on port 22, referenced in EC2 creation, below
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      VpcId:
+        Ref: VPCId
+      GroupDescription: Enable SSH access via port 22
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: '22'
+        ToPort: '22'
+        CidrIp:
+          Ref: SSHLocation
+      - IpProtocol: tcp
+        FromPort: '80'
+        ToPort: '80'
+        CidrIp: 0.0.0.0/0
+
+  # An EC2 instance for the web server
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    # DependsOn: AttachGateway
+    Metadata:
+      Comment: Install a simple application
+
+      # Don't bother with this crap for a real template, but for now will let us test that everything's working.
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              httpd: []
+          files:
+            "/var/www/html/index.html":
+              content:
+                Fn::Join:
+                - "\n"
+                - - <img src="
+                  - Fn::FindInMap:
+                    - Region2Examples
+                    - Ref: AWS::Region
+                    - Examples
+                  - /cloudformation_graphic.png" alt="AWS CloudFormation Logo"/>
+                  - "<h1>Congratulations, you have successfully launched the AWS CloudFormation
+                    sample.</h1>"
+              mode: '000644'
+              owner: root
+              group: root
+            "/etc/cfn/cfn-hup.conf":
+              content:
+                Fn::Join:
+                - ''
+                - - "[main]\n"
+                  - stack=
+                  - Ref: AWS::StackId
+                  - "\n"
+                  - region=
+                  - Ref: AWS::Region
+                  - "\n"
+              mode: '000400'
+              owner: root
+              group: root
+            "/etc/cfn/hooks.d/cfn-auto-reloader.conf":
+              content:
+                Fn::Join:
+                - ''
+                - - "[cfn-auto-reloader-hook]\n"
+                  - 'triggers=post.update
+
+'
+                  - 'path=Resources.WebServerInstance.Metadata.AWS::CloudFormation::Init
+
+'
+                  - 'action=/opt/aws/bin/cfn-init -v '
+                  - "         --stack "
+                  - Ref: AWS::StackName
+                  - "         --resource WebServerInstance "
+                  - "         --region "
+                  - Ref: AWS::Region
+                  - "\n"
+                  - 'runas=root
+
+'
+              mode: '000400'
+              owner: root
+              group: root
+          services:
+            sysvinit:
+              httpd:
+                enabled: 'true'
+                ensureRunning: 'true'
+              cfn-hup:
+                enabled: 'true'
+                ensureRunning: 'true'
+                files:
+                - "/etc/cfn/cfn-hup.conf"
+                - "/etc/cfn/hooks.d/cfn-auto-reloader.conf"
+
+    Properties:
+      ImageId:
+        Fn::FindInMap:
+        - AWSRegionArch2AMI
+        - Ref: AWS::Region
+        - Fn::FindInMap:
+          - AWSInstanceType2Arch
+          - Ref: InstanceType
+          - Arch
+      InstanceType:
+        Ref: InstanceType
+      KeyName:
+        Ref: KeyName
+      Tags:
+      - Key: Application
+        Value:
+          Ref: AWS::StackId
+      NetworkInterfaces:
+      - GroupSet:
+        - Ref: InstanceSecurityGroup
+        AssociatePublicIpAddress: 'true'
+        DeviceIndex: '0'
+        DeleteOnTermination: 'true'
+        SubnetId:
+          Ref: PublicSubnetId # Get from param?
+      UserData:
+        Fn::Base64:
+          Fn::Join:
+          - ''
+          - - "#!/bin/bash -xe\n"
+            - 'yum update -y aws-cfn-bootstrap
+
+'
+            - "/opt/aws/bin/cfn-init -v "
+            - "         --stack "
+            - Ref: AWS::StackName
+            - "         --resource WebServerInstance "
+            - "         --region "
+            - Ref: AWS::Region
+            - "\n"
+            - "/opt/aws/bin/cfn-signal -e $? "
+            - "         --stack "
+            - Ref: AWS::StackName
+            - "         --resource WebServerInstance "
+            - "         --region "
+            - Ref: AWS::Region
+            - "\n"
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT15M
+
+Outputs:
+
+  # VPCId:
+  #   Value: !Sub ${VPCStack.Outputs.VPCId}
+  #   Description: "ID of VPC"
+
+  URL:
+    Value:
+      Fn::Join:
+      - ''
+      - - http://
+        - Fn::GetAtt:
+          - WebServerInstance
+          - PublicIp
+    Description: Newly created application URL
