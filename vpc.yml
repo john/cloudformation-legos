@@ -1,15 +1,8 @@
-# This creates a VPC with two subnets, one public and one private. Subsequent CloudFormation
-# templates in this series build on this to add additional resources.
+# This creates a VPC with two subnets, one public and one private, each with associated route tables.
+# The public subnet has an Internet Gateway attached.
 
-# Use defaults for everything: this is very abbreviated for clarity and only supports t2.small in us-west-2.
-# For all options see the template this is based on, and adapt for your own use:
-# http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/sample-templates-services-us-west-2.html
-
-# To run, go to: https://us-west-2.console.aws.amazon.com/cloudformation,
-# select the region you want to create the VPC in, and choose 'Create stack'
-
-# Consideration for using this yourself: your own instance types, add a NAT Gateway, Network ACLs
-# http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_ACLs.html
+# Each subnet has a rule attached, additional rules should be added for use in production. Recommended rules for different scenarios:
+# http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_Appendix_NACLs.html
 
 ---
 AWSTemplateFormatVersion: '2010-09-09'
@@ -34,12 +27,14 @@ Resources:
         Ref: VPC
       CidrBlock: 10.0.1.0/24
       Tags:
+      - Key: Type
+        Value: 'private'
       - Key: Application
         Value:
           Ref: AWS::StackId
-
-  # A route table is a set of rules (aka routes) to direct network traffic. Every subnet needs to be connected to a route table
-  RouteTable:
+          
+  # Add a route table for the public subnet. We'll add routes to it below.
+  PrivateRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId:
@@ -48,8 +43,17 @@ Resources:
       - Key: Application
         Value:
           Ref: AWS::StackId
-
-  # Add a NAT gateway to the private subnet, to allow communication out, like to APIs
+          
+  # The foot bone is connected to the heel bone... attach the route table to the subnet
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PrivateSubnet
+      RouteTableId:
+        Ref: PrivateRouteTable
+        
+  # Add a NAT gateway to the private subnet if you want to allow communication out, like to APIs
 
   # A public subnet is just a subnet with an Internet Gateway attached, which we'll do below
   PublicSubnet:
@@ -58,10 +62,33 @@ Resources:
       VpcId:
         Ref: VPC
       CidrBlock: 10.0.0.90/24
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Type
+        Value: 'public'
+      - Key: Application
+        Value:
+          Ref: AWS::StackId
+          
+  # A route table is a set of rules (aka routes) to direct network traffic. Every subnet needs to be connected to a route table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: VPC
       Tags:
       - Key: Application
         Value:
           Ref: AWS::StackId
+          
+  # The foot bone is connected to the heel bone... attach the route table to the subnet
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: PublicSubnet
+      RouteTableId:
+        Ref: PublicRouteTable
 
   # Add the Internet Gateway to make the public subnet Internet accessible
   InternetGateway:
@@ -81,36 +108,16 @@ Resources:
       InternetGatewayId:
         Ref: InternetGateway
 
-  # Add a route table for the public subnet. We'll add routes to it below.
-  RouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId:
-        Ref: VPC
-      Tags:
-      - Key: Application
-        Value:
-          Ref: AWS::StackId
-
   # Cidr block 0.0.0.0/0 is the whole Internet. This route opens the Internet Gateway to the all Internet traffic
   Route:
     Type: AWS::EC2::Route
     DependsOn: AttachGateway
     Properties:
       RouteTableId:
-        Ref: RouteTable
+        Ref: PublicRouteTable
       DestinationCidrBlock: 0.0.0.0/0
       GatewayId:
         Ref: InternetGateway
-
-  # The foot bone is connected to the heel bone... attach the route table to the subnet
-  SubnetRouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId:
-        Ref: PublicSubnet
-      RouteTableId:
-        Ref: RouteTable
 
 Outputs:
   VPCId:
