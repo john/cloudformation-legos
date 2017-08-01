@@ -1,0 +1,118 @@
+# This creates a simple VPC with a single EC2 instance running in it, suitable for a basic web app.
+# It uses nested stacks; the creation of the VPC and the EC2 instance happen in vpc.yml and ec2.yml, respectively.
+
+# To run, go to: https://us-west-2.console.aws.amazon.com/cloudformation,
+# select the region you want to create the VPC in, and choose 'Create stack'
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Sample CloudFormation template'
+
+Parameters:
+  InstanceType:
+    Description: WebServer EC2 instance type
+    Type: String
+    Default: t2.small
+    
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+    
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    Default: 0.0.0.0/0
+
+Resources:
+  
+  # Sets up the VPC, subnets, etc.
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3-us-west-2.amazonaws.com/www.fryolator.com/vpc.yml
+      TimeoutInMinutes: '60'
+  
+  # Sets up EC2 instance
+  EC2Stack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: VPCStack
+    Properties:
+      TemplateURL: https://s3-us-west-2.amazonaws.com/www.fryolator.com/ec2.yml
+      TimeoutInMinutes: '60'
+      Parameters:
+        InstanceType: !Ref InstanceType
+        KeyName: !Ref KeyName
+        SSHLocation: !Ref SSHLocation
+        PublicSubnetId: !GetAtt VPCStack.Outputs.PublicSubnetId
+        VPCId: !GetAtt VPCStack.Outputs.VPCId
+    DependsOn: VPCStack
+      
+  # Assign an Elastic IP to the web server instance
+  # NOT WORKING, but was able to fix in console.
+  PublicIPAddress:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !GetAtt EC2Stack.Outputs.InstanceId
+      
+  PublicNetworkAcl:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !GetAtt VPCStack.Outputs.VPCId
+      Tags:
+      - Key: Application
+        Value:
+          Ref: AWS::StackId
+      - Key: Network
+        Value: Public
+        
+  # Allow all HTTP traffic
+  InboundHTTPPublicNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: PublicNetworkAcl
+      RuleNumber: '100'
+      Protocol: '6'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: '80'
+        To: '80'
+        
+  # Allow all HTTPS traffic
+  InboundHTTPSPublicNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: PublicNetworkAcl
+      RuleNumber: '101'
+      Protocol: '6'
+      RuleAction: allow
+      Egress: 'false'
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: '443'
+        To: '443'
+      
+  # Let it all out
+  OutboundPublicNetworkAclEntry:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId:
+        Ref: PublicNetworkAcl
+      RuleNumber: '100'
+      Protocol: '6'
+      RuleAction: allow
+      Egress: 'true'
+      CidrBlock: 0.0.0.0/0
+      PortRange:
+        From: '0'
+        To: '65535'
+
+Outputs:
+  URL:
+    Value: !GetAtt EC2Stack.Outputs.URL
+    Description: Newly created application URL
