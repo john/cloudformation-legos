@@ -1,0 +1,124 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Sample CloudFormation template'
+
+Parameters:
+  VPCId:
+    Type: String
+  Subnet1Id:
+    Type: String
+  Subnet2Id:
+    Type: String
+  DBEngine:
+    Default: postgres
+    Description: The database engine
+    Type: String
+    MinLength: '5'
+    AllowedValues:
+    - postgres
+    - mysql
+  DBName:
+    Default: pgdb
+    Description: The database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '8'
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters.
+  DBUsername:
+    Default: root
+    Description: The db username
+    Type: String
+    MinLength: '3'
+  DBPassword:
+    NoEcho: 'true'
+    Description: The database admin account password
+    Type: String
+    MinLength: '8'
+  DBClass:
+    Default: db.t2.micro
+    Description: Database instance class
+    Type: String
+    AllowedValues:
+    - db.t2.micro
+    - db.m4.small
+    - db.m4.large
+    - db.m4.2xlarge
+    - db.r3.large
+    - db.r3.2xlarge
+    ConstraintDescription: must select a valid database instance type.
+  DBAllocatedStorage:
+    Default: '5'
+    Description: The size of the database (Gb)
+    Type: Number
+    MinValue: '5'
+    MaxValue: '6144'
+    ConstraintDescription: must be between 5+
+    
+Resources:
+  
+  # Ports here are only for postgres I think, need to make a param
+  DBEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: DB frontend Access
+      VpcId:
+        Ref: VPCId
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        CidrIp: 10.0.0.0/16
+        
+  # VPC RDS instances need to have a subnet group with at least two subnets, each in a different az
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB Private Subnet
+      SubnetIds:
+      - Ref: Subnet1Id
+      - Ref: Subnet2Id
+        
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName:
+        Ref: DBName
+      AllocatedStorage:
+        Ref: DBAllocatedStorage
+      DBInstanceClass:
+        Ref: DBClass
+      Engine:
+        Ref: DBEngine
+      MasterUsername:
+        Ref: DBUsername
+      MasterUserPassword:
+        Ref: DBPassword
+      StorageEncrypted: false
+      MultiAZ: false
+      DBSubnetGroupName:
+        Ref: DBSubnetGroup
+      # DBParameterGroupName:
+      #   Ref: myDBParamGroup
+      VPCSecurityGroups:
+      - Fn::GetAtt:
+        - DBEC2SecurityGroup
+        - GroupId
+        
+Outputs:
+  JDBCConnectionString:
+    Description: JDBC connection string for database
+    Value:
+      Fn::Join:
+      - ''
+      - - jdbc:postgresql://
+        - Fn::GetAtt:
+          - RDSInstance
+          - Endpoint.Address
+        - ":"
+        - Fn::GetAtt:
+          - RDSInstance
+          - Endpoint.Port
+        - "/"
+        - Ref: DBName
